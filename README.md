@@ -1,3 +1,5 @@
+MODDED BY ME FOR TRAINING ON VIDEO AND TRYING TO CHANGE NETWORK TO INCLUDE TABULAR DATA FOR THE NFL HELMET COLLISION KAGGLE COMP.
+
 <div align="center">
 <p>
 <a align="left" href="https://ultralytics.com/yolov5" target="_blank">
