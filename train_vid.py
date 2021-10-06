@@ -182,6 +182,7 @@ def train(opt):
     scaler = amp.GradScaler(enabled=cuda)
     compute_loss = ComputeLoss(model)  # init loss class
     last_opt_step = -1
+    results = (0, 0, 0, 0, 0, 0, 0)
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         model.train()
     

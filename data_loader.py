@@ -22,21 +22,31 @@ class Loader:
         self.frames = deque()
         self.len = len(pd.read_csv(label_path)['video_frame'].unique())
         self.waiting = Queue()
+        self.work = Queue()
+        self.processes = list()
+        self.working = list()
+        self.nworkers = os.cpu_count()
 
     def __len__(self):
         return -(-self.len // self.bs) #ceil divide
     
     def __iter__(self):
+        while len(mp.active_children()) < self.nworkers:
+            v = mp.Value('i', False)
+            p = mp.Process(target=self.dataset.run, args=[self.waiting, self.work, v], daemon=True)
+            p.start()
+            self.processes.append(p)
+            self.working.append(v)
         self.process_vid()
         return self
 
     def __next__(self):
         self.process_vid()
-        while self.vid_id < len(self.vf) and len(self.frames) < self.bs or len(self.frames) < self.bs and len(mp.active_children()) > 0:
+        while self.vid_id < len(self.vf) and len(self.frames) < self.bs or len(self.frames) < self.bs and self.active_workers() > 0:
             self.process_vid()
             time.sleep(1) #wait for the last of the frames to be loaded
         
-        if len(self.frames) == 0 and len(mp.active_children()) == 0:
+        if len(self.frames) == 0 and self.active_workers() == 0:
             raise StopIteration
 
         frames = None
@@ -54,16 +64,16 @@ class Loader:
         return frames, labels
     
     def process_vid(self):
-        if len(self.frames) < 20 * self.bs and len(mp.active_children()) < os.cpu_count():
+        if len(self.frames) < 10 * self.bs and self.vid_id < len(self.vf) and self.active_workers() < self.nworkers:
             vid = self.vf[self.vid_id]
-            #self.pool.apply_async(self.dataset.next_vid, [self.vp, vid])
-            p = mp.Process(target=self.dataset.next_vid, args=[self.vp, vid, self.waiting], daemon=True)
-            p.start()
+            self.work.put((self.vp, vid))
             self.vid_id += 1
 
         while not self.waiting.empty():
-            frames = self.waiting.get() #get error heap frag?
-            self.frames.extend(frames)
+            self.frames.append(self.waiting.get())
+    
+    def active_workers(self):
+        return sum(map(lambda x: x.value, self.working))
             
 class Dataset:
     def __init__(self, path, data_yaml, img_size) -> None:
@@ -82,8 +92,8 @@ class Dataset:
         labels['w'] = labels['width']
         labels['h'] = labels['height']
 
-        #TODO: divide xywh by resolution to get range [0-1]
-        #TODO: reshape images correctly
+        #divide xywh by resolution to get range [0-1]
+        #reshape images correctly
 
         labels = labels.drop(['left', 'width', 'top', 'height'], axis=1)
         with open(data_yaml, 'r') as f:
@@ -95,17 +105,24 @@ class Dataset:
         labels['label'] = labels['label'].apply(lambda x: convert[x]) #convert label string to encoding
         self.labels = labels
     
-    def next_vid(self, vp, vid, waiting):
-        mask = self.labels['video'] == vid
-        labels = self.labels[mask]
-        cap = cv2.VideoCapture(os.path.join(vp, vid))
+    def run(self, waiting, work, working):
+        while True:
+            if not work.empty():
+                working.value = True
+                vp, vid = work.get()
+                cap = cv2.VideoCapture(os.path.join(vp, vid))
+                mask = self.labels['video'] == vid
+                labels = self.labels[mask]
+                self.next_vid(cap, waiting, labels)
+            working.value = False
+            time.sleep(1)
+    
+    def next_vid(self, cap, waiting, labels):
         fn = 1
-        frames = deque() #dequeue doesn't cause error. list causes error!
         while True:
             ret, frame = cap.read()
             if not ret:
                 cap.release()
-                waiting.put(frames)
                 break
             
             frame, ratio, (dw, dh) = letterbox(frame, new_shape=self.img_size)
@@ -124,7 +141,7 @@ class Dataset:
             l = np.concatenate([l[['frame', 'label']].astype(np.float32).values, box], axis=1)
             l = torch.from_numpy(l).pin_memory()
             fn += 1
-            frames.append((frame, l))
+            waiting.put((frame, l))
 
 if __name__ == '__main__':
     #tests
