@@ -11,6 +11,7 @@ from multiprocessing import Queue
 from tqdm import tqdm
 from collections import deque
 from utils.augmentations import letterbox
+import random
 
 class Loader:
     def __init__(self, batch_size, data_yaml, img_size=640, vid_path='nfl-health-and-safety-helmet-assignment/train', label_path='nfl-health-and-safety-helmet-assignment/train_labels.csv'):
@@ -31,6 +32,7 @@ class Loader:
         return -(-self.len // self.bs) #ceil divide
     
     def __iter__(self):
+        random.shuffle(self.vf)
         while len(mp.active_children()) < self.nworkers:
             v = mp.Value('i', False)
             p = mp.Process(target=self.dataset.run, args=[self.waiting, self.work, v], daemon=True)
